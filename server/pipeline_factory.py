@@ -62,7 +62,12 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
     from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
     from pipecat.services.gradium.tts import GradiumTTSService
     from pipecat.services.llm_service import FunctionCallParams
-    from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
+    from pipecat.audio.turn.smart_turn.base_smart_turn import SmartTurnParams
+    from pipecat.audio.turn.smart_turn.local_smart_turn_v3 import LocalSmartTurnAnalyzerV3
+    from pipecat.turns.user_turn_strategies import (
+        FilterIncompleteUserTurnStrategies,
+        TurnAnalyzerUserTurnStopStrategy,
+    )
 
     import brain
     from contracts import BookingResult
@@ -191,7 +196,19 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         context,
         user_params=LLMUserAggregatorParams(
             vad_analyzer=SileroVADAnalyzer(),
-            user_turn_strategies=FilterIncompleteUserTurnStrategies(),
+            # Latency tuning #1: keep the working FilterIncompleteUserTurnStrategies container (its
+            # LLM turn-completion gate) but lower the Smart Turn v3 endpointing stop_secs 3.0 -> 1.2
+            # via its `stop=` detector chain. When an utterance is judged INCOMPLETE the turn now
+            # force-ends after 1.2s of silence instead of 3.0s - ~1.8s off every fragmented turn.
+            # NOTE: user_turn_strategies must be a UserTurnStrategies container (with .start/.stop),
+            # NOT a bare list - the turn controller does `self._user_turn_strategies.start`.
+            user_turn_strategies=FilterIncompleteUserTurnStrategies(
+                stop=[
+                    TurnAnalyzerUserTurnStopStrategy(
+                        turn_analyzer=LocalSmartTurnAnalyzerV3(params=SmartTurnParams(stop_secs=1.2))
+                    )
+                ],
+            ),
         ),
     )
 
