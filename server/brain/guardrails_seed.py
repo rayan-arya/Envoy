@@ -9,14 +9,14 @@ deliberately INCOMPLETE.
     the exact terms G0 enumerates (card number, security code / CVV, login, password,
     access token) -> blocked live in Beat 3.
   - G0 has a designed gap: it enumerates SPECIFIC named credentials instead of the general
-    category. The "G0_breaching" tier asks for the same secret under a different name
-    (sync PIN, verification/confirmation code, session ID, system passphrase, merchant
-    reference, auth code...). None of those words are on the list, so G0 stays silent and
-    they slip through in Beat 4.
+    category. The "G0_breaching" tier asks for the same secret under a renamed identifier
+    that is not on G0's literal list, so G0 stays silent and it slips through in Beat 4.
+    (The exact renamed terms live in counterpart/persona.py's ATTACK_LIBRARY, deliberately
+    not repeated here so brain/ never spells them out for the agent.)
 
 That gap is the point: it gives the self-heal patcher something concrete to learn. R1
-generalizes G0 from "these specific words" to "ANY code / PIN / token / passphrase /
-identifier that grants access or authorizes a charge, whatever it's called."
+generalizes G0 from "these specific words" to "ANY access-granting or charge-authorizing
+identifier, whatever it's called."
 
 Uses ONLY contracts' public functions (load_guardrails, append_guardrail). Does NOT touch
 contracts.py. Pure / idempotent. Stdlib + contracts only. No keys, no network.
