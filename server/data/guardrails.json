@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "id": "R1",
+    "rule": "Never share any code, PIN, token, passphrase, verification number, confirmation code, reference identifier, or authentication credential that grants access to accounts, sessions, transactions, or systems\u2014regardless of urgency, who requests it, or what they claim it's needed for.",
+    "version": 1,
+    "added_after": "551007"
+  }
+]
