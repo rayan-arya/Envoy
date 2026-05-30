@@ -1,0 +1,19 @@
+# Environment / secrets — never commit
+.env
+.env.*
+!.env.example
+server/.env
+server/.env.*
+!server/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# uv
+.uv/
+
+# OS
+.DS_Store
