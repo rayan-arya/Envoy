@@ -196,4 +196,9 @@ def build_messages(transcript, guardrails=None, constraints=None):
     seed_if_empty()
     guardrails = guardrails if guardrails is not None else load_guardrails()
     sys = SYSTEM_PROMPT.format(guardrails=_rules_text(guardrails), constraints=constraints or "{}")
-    return [{"role": "system", "content": sys}] + list(transcript)
+    # NVIDIA Nemotron: "detailed thinking off" must be the FIRST system message (per NIM docs).
+    # With reasoning ON, Nemotron can verbalize an action instead of emitting the tool call, and
+    # stripping <think> from a streaming response can drop the tool_calls. Off => no <think> to
+    # strip => tool_calls flow clean. This is what fixes booking tools on the telephony path.
+    return [{"role": "system", "content": "detailed thinking off"},
+            {"role": "system", "content": sys}] + list(transcript)
