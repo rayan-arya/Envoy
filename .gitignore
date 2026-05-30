@@ -6,6 +6,12 @@ server/.env
 server/.env.*
 !server/.env.example
 
+# Google OAuth secrets — never commit
+credentials.json
+token.json
+**/credentials.json
+**/token.json
+
 # Python
 __pycache__/
 *.py[cod]

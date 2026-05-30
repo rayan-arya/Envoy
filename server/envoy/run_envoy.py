@@ -70,7 +70,7 @@ async def bot(runner_args):
 
     worker = pipeline_factory.build_pipeline(
         system_prompt=brain.SYSTEM_PROMPT,
-        tools=["end_call"],
+        tools=["end_call", "create_event", "send_confirmation"],
         transport=transport,
         constraints=CONSTRAINTS,
     )

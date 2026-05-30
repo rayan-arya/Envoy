@@ -32,6 +32,7 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
 
     The transport's client-connected/disconnected handlers are registered here (Envoy speaks first).
     """
+    import asyncio
     import os
     from collections import deque
 
@@ -64,12 +65,15 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
     from pipecat.turns.user_turn_strategies import FilterIncompleteUserTurnStrategies
 
     import brain
+    from contracts import BookingResult
+    from integrations.calendar import create_event as cal_create_event
+    from integrations.gmail import send_confirmation as gmail_send_confirmation
     from nemotron_llm import VLLMOpenAILLMService
     from nvidia_stt import NVidiaWebSocketSTTService
 
     on_event = on_event or append_event
     constraints = constraints or {}
-    enabled_tools = ["end_call"] if tools is None else list(tools)
+    enabled_tools = ["end_call", "create_event", "send_confirmation"] if tools is None else list(tools)
 
     # --- Services (copied from bot-nemotron.py) -----------------------------------------------
     # Speech-to-Text: Nemotron streaming STT over WebSocket (16-bit PCM, 16 kHz, mono).
@@ -99,7 +103,18 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         ),
     )
 
-    # --- Tool: real end_call (agreed name; lives in brain.TOOL_SCHEMAS, implemented here) -------
+    # --- Tools: real side effects (agreed names live in brain.TOOL_SCHEMAS, implemented here) ----
+    # Per-call state for idempotency + chaining (fresh per connection):
+    #   events: confirmation_ref -> {event_id, html_link}   emails: set of confirmation_refs sent
+    booking_state = {"events": {}, "emails": set()}
+
+    def _booking_from_args(venue, time, confirmation_ref, party_size, price_estimate, notes):
+        return BookingResult(
+            success=True, venue=venue or "", time=time or "", party_size=int(party_size or 0),
+            price_estimate=float(price_estimate or 0.0), confirmation_ref=confirmation_ref or "",
+            notes=notes or "",
+        )
+
     async def end_call(params: FunctionCallParams) -> None:
         """End the call. Only call this AFTER you have said goodbye in the same turn. The pipeline
         flushes any queued speech, then actually ends the session via EndTaskFrame."""
@@ -108,7 +123,64 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         # run_llm=False: don't generate a follow-up; the goodbye is already in flight.
         await params.result_callback({"ok": True}, properties=FunctionCallResultProperties(run_llm=False))
 
-    tool_functions = [end_call] if "end_call" in enabled_tools else []
+    async def create_event(
+        params: FunctionCallParams, venue: str, time: str, confirmation_ref: str,
+        party_size: int = 0, price_estimate: float = 0.0, notes: str = "",
+    ) -> None:
+        """Add the CONFIRMED reservation to the user's Google Calendar. Call this ONLY after the
+        counterpart has confirmed the booking AND given a confirmation reference - never speculatively.
+
+        Args:
+            venue: The restaurant / venue name.
+            time: The reservation time as spoken, e.g. "7:00 PM".
+            confirmation_ref: The booking's confirmation number/reference from the counterpart.
+            party_size: Number of people in the party.
+            price_estimate: Estimated total price, if known.
+            notes: Any extra notes (seating, dietary, etc.).
+        """
+        if not (venue and time and confirmation_ref):
+            await params.result_callback({"ok": False, "error": "booking not confirmed yet: need venue, time, and confirmation_ref before adding to the calendar"})
+            return
+        if confirmation_ref in booking_state["events"]:  # idempotent: don't double-create
+            await params.result_callback({"ok": True, "idempotent": True, **booking_state["events"][confirmation_ref]})
+            return
+        booking = _booking_from_args(venue, time, confirmation_ref, party_size, price_estimate, notes)
+        # google client is synchronous/blocking - run off the event loop so the pipeline isn't stalled.
+        result = await asyncio.to_thread(cal_create_event, booking)
+        if result.get("ok"):
+            booking_state["events"][confirmation_ref] = {"event_id": result.get("event_id"), "html_link": result.get("html_link")}
+        await params.result_callback(result)
+
+    async def send_confirmation(
+        params: FunctionCallParams, venue: str, time: str, confirmation_ref: str,
+        party_size: int = 0, price_estimate: float = 0.0, notes: str = "",
+    ) -> None:
+        """Email the user a confirmation of the CONFIRMED reservation. Includes the calendar link if
+        create_event already ran this call. Call this ONLY after the booking is confirmed.
+
+        Args:
+            venue: The restaurant / venue name.
+            time: The reservation time as spoken, e.g. "7:00 PM".
+            confirmation_ref: The booking's confirmation number/reference.
+            party_size: Number of people in the party.
+            price_estimate: Estimated total price, if known.
+            notes: Any extra notes.
+        """
+        if not (venue and time and confirmation_ref):
+            await params.result_callback({"ok": False, "error": "booking not confirmed yet: need venue, time, and confirmation_ref before emailing"})
+            return
+        if confirmation_ref in booking_state["emails"]:  # idempotent: don't double-send
+            await params.result_callback({"ok": True, "idempotent": True, "note": "confirmation already emailed this call"})
+            return
+        booking = _booking_from_args(venue, time, confirmation_ref, party_size, price_estimate, notes)
+        event_link = booking_state["events"].get(confirmation_ref, {}).get("html_link")  # chained
+        result = await asyncio.to_thread(gmail_send_confirmation, booking, event_link)
+        if result.get("ok"):
+            booking_state["emails"].add(confirmation_ref)
+        await params.result_callback(result)
+
+    _tool_impls = {"end_call": end_call, "create_event": create_event, "send_confirmation": send_confirmation}
+    tool_functions = [_tool_impls[name] for name in enabled_tools if name in _tool_impls]
     tools_schema = ToolsSchema(standard_tools=tool_functions)
     for fn in tool_functions:
         llm.register_direct_function(fn)
