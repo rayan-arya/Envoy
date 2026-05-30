@@ -1,0 +1,429 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Envoy · Self-Heal Monitor</title>
+<style>
+  :root{
+    --bg:#080a0e; --panel:#0f1319; --panel-2:#131923; --border:#212835;
+    --text:#e9edf3; --muted:#7d8799; --muted-2:#525c6b;
+    --danger:#ff5a5a; --danger-bg:#2a1113; --danger-bd:#5a1f22;
+    --safe:#34e3a4; --safe-bg:#0c2620; --safe-bd:#16493a;
+    --amber:#ffbf4d; --signal:#4fb6ff;
+    --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+    --sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--text);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;}
+  body{padding:20px 24px 40px;max-width:1380px;margin:0 auto;}
+
+  /* ---- top bar ---- */
+  .topbar{display:flex;align-items:center;justify-content:space-between;
+    padding-bottom:16px;margin-bottom:18px;border-bottom:1px solid var(--border);}
+  .brand{display:flex;align-items:center;gap:11px;}
+  .logo-dot{width:11px;height:11px;border-radius:2px;background:var(--safe);
+    box-shadow:0 0 12px var(--safe);}
+  .brand-name{font-weight:700;letter-spacing:.16em;font-size:15px;}
+  .brand-sub{color:var(--muted);letter-spacing:.22em;font-size:11px;font-weight:600;
+    border-left:1px solid var(--border);padding-left:11px;}
+  .live{display:flex;align-items:center;gap:8px;color:var(--muted);font-family:var(--mono);
+    font-size:11px;letter-spacing:.12em;text-transform:uppercase;}
+  /* static dot — no pulse, so a filmed static dashboard is completely still */
+  .live-dot{width:7px;height:7px;border-radius:50%;background:var(--safe);
+    box-shadow:0 0 7px var(--safe);}
+
+  .label{font-size:11px;letter-spacing:.2em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;}
+
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;}
+  .panel-head{display:flex;align-items:baseline;justify-content:space-between;
+    padding:15px 18px;border-bottom:1px solid var(--border);}
+  .panel-head h2{margin:0;font-size:12px;letter-spacing:.2em;color:var(--text);font-weight:700;}
+  .panel-sub{font-family:var(--mono);font-size:11px;color:var(--muted);}
+
+  /* ---- hero trust ---- */
+  .hero{display:grid;grid-template-columns:1.15fr 1fr;gap:0;margin-bottom:16px;overflow:hidden;}
+  .hero-left{padding:22px 26px;border-right:1px solid var(--border);}
+  .trust-readout{display:flex;align-items:flex-end;gap:6px;margin:6px 0 16px;}
+  .trust-num{font-family:var(--mono);font-size:84px;line-height:.9;font-weight:700;
+    letter-spacing:-.02em;transition:color .5s ease;font-variant-numeric:tabular-nums;}
+  .trust-max{font-family:var(--mono);font-size:24px;color:var(--muted-2);margin-bottom:11px;}
+  .trust-track{height:14px;background:#0a0d12;border:1px solid var(--border);border-radius:8px;
+    overflow:hidden;}
+  .trust-bar{height:100%;width:0;border-radius:7px;
+    transition:width 1s cubic-bezier(.22,1,.36,1),background-color .6s ease;}
+  .lvl-low{background:var(--danger);box-shadow:0 0 16px rgba(255,90,90,.45)}
+  .lvl-mid{background:var(--amber);box-shadow:0 0 16px rgba(255,191,77,.4)}
+  .lvl-high{background:var(--safe);box-shadow:0 0 18px rgba(52,227,164,.5)}
+  .t-low{color:var(--danger)} .t-mid{color:var(--amber)} .t-high{color:var(--safe)}
+  .trust-delta{margin-top:12px;font-family:var(--mono);font-size:12px;color:var(--muted);
+    letter-spacing:.04em;}
+  .trust-delta b{color:var(--safe);}
+
+  .hero-right{padding:22px 26px;display:flex;flex-direction:column;}
+  .spark{width:100%;height:84px;margin:10px 0 18px;display:block;}
+  .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:auto;}
+  .kpi{background:var(--panel-2);border:1px solid var(--border);border-radius:8px;
+    padding:12px 14px;}
+  .kpi-num{font-family:var(--mono);font-size:28px;font-weight:700;line-height:1;
+    font-variant-numeric:tabular-nums;}
+  .kpi-lbl{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);
+    margin-top:7px;font-weight:600;}
+  .danger-text{color:var(--danger)} .safe-text{color:var(--safe)}
+
+  /* ---- grid: feed + rules ---- */
+  .grid{display:grid;grid-template-columns:1.55fr 1fr;gap:16px;margin-bottom:16px;}
+
+  .feed{padding:8px;}
+  .row{display:grid;grid-template-columns:38px 1fr auto;align-items:center;gap:14px;
+    padding:14px 12px;border-radius:8px;border:1px solid transparent;}
+  .row + .row{margin-top:4px;}
+  .row.breach{background:linear-gradient(90deg,var(--danger-bg),transparent 60%);
+    border-color:var(--danger-bd);}
+  /* animation runs ONLY on rows newly added this render (diff by iteration id) */
+  .row.enter{animation:rowIn .45s ease both;}
+  @keyframes rowIn{from{opacity:0;transform:translateX(-8px)}to{opacity:1;transform:none}}
+  .row-iter{font-family:var(--mono);font-size:13px;color:var(--muted-2);}
+  .row-attack{font-family:var(--mono);font-size:14px;color:var(--text);font-weight:600;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .row-flow{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin-top:6px;}
+  .row-main{min-width:0;}
+  .row-variant{display:flex;align-items:center;gap:7px;justify-self:end;}
+  .vlabel{font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted-2);
+    font-weight:600;}
+
+  .badge{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.08em;
+    padding:4px 9px;border-radius:5px;border:1px solid transparent;white-space:nowrap;}
+  .badge::before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;
+    margin-right:6px;vertical-align:1px;}
+  .badge.breach{color:var(--danger);background:var(--danger-bg);border-color:var(--danger-bd);}
+  .badge.breach::before{background:var(--danger);box-shadow:0 0 7px var(--danger);}
+  .badge.blocked{color:var(--safe);background:var(--safe-bg);border-color:var(--safe-bd);}
+  .badge.blocked::before{background:var(--safe);box-shadow:0 0 7px var(--safe);}
+  .arrow{color:var(--muted-2);font-family:var(--mono);font-size:13px;}
+  .leaked{font-family:var(--mono);font-size:11.5px;color:var(--danger);font-weight:700;
+    background:var(--danger-bg);border:1px dashed var(--danger-bd);border-radius:5px;
+    padding:3px 8px;letter-spacing:.03em;}
+  .rule-chip{font-family:var(--mono);font-size:11px;color:var(--signal);
+    border:1px solid #1d3a52;background:#0c1722;border-radius:5px;padding:3px 8px;font-weight:700;}
+
+  /* ---- rules panel ---- */
+  .rules-group{padding:14px 16px;}
+  .rules-group + .rules-group{border-top:1px solid var(--border);}
+  .group-label{font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted);
+    font-weight:700;margin-bottom:11px;display:flex;align-items:center;gap:8px;}
+  .group-label.learned{color:var(--safe);}
+  .group-label .count{font-family:var(--mono);color:var(--muted-2);font-weight:600;}
+  .rule{border:1px solid var(--border);border-radius:8px;padding:12px 13px;
+    background:var(--panel-2);margin-bottom:9px;}
+  .rule:last-child{margin-bottom:0;}
+  .rule.learned{border-color:var(--safe-bd);background:var(--safe-bg);}
+  .rule-id{font-family:var(--mono);font-size:12px;font-weight:700;letter-spacing:.05em;
+    color:var(--muted);}
+  .rule.learned .rule-id{color:var(--safe);}
+  .rule-after{font-family:var(--mono);font-size:10.5px;color:var(--muted-2);float:right;}
+  .rule-text{font-size:12.5px;line-height:1.5;color:#cdd4df;margin-top:7px;}
+  .rule.enter{animation:ruleIn .7s cubic-bezier(.22,1,.36,1) both;}
+  @keyframes ruleIn{0%{opacity:0;transform:translateY(10px);box-shadow:0 0 0 0 var(--safe)}
+    35%{box-shadow:0 0 0 2px rgba(52,227,164,.55)}
+    100%{opacity:1;transform:none;box-shadow:0 0 0 0 rgba(52,227,164,0)}}
+  .empty{color:var(--muted-2);font-family:var(--mono);font-size:12px;padding:4px 2px;}
+
+  /* ---- variant callout ---- */
+  .callout{display:flex;align-items:center;gap:20px;padding:20px 24px;margin-bottom:16px;
+    border-color:var(--safe-bd);
+    background:linear-gradient(90deg,var(--safe-bg),var(--panel) 70%);}
+  .callout-mark{flex:none;width:42px;height:42px;border-radius:9px;border:1px solid var(--safe-bd);
+    display:flex;align-items:center;justify-content:center;background:#0c2620;}
+  .callout-mark svg{width:22px;height:22px;stroke:var(--safe);}
+  .callout-title{font-size:13px;letter-spacing:.18em;font-weight:700;color:var(--safe);}
+  .callout-text{color:var(--muted);font-size:13px;margin-top:5px;max-width:62ch;line-height:1.5;}
+  .callout-stat{margin-left:auto;text-align:right;}
+  .callout-stat .big{font-family:var(--mono);font-size:34px;font-weight:700;color:var(--safe);
+    font-variant-numeric:tabular-nums;}
+  .callout-stat .big .den{color:var(--muted-2);font-size:20px;}
+
+  /* ---- Cekura eval panel (sponsor proof) ---- */
+  .cek-body{padding:18px 18px 16px;}
+  .cek-delta{display:flex;align-items:center;justify-content:center;gap:28px;
+    padding:14px 0 20px;border-bottom:1px solid var(--border);margin-bottom:14px;}
+  .cek-stat{text-align:center;}
+  .cek-num{font-family:var(--mono);font-size:54px;font-weight:700;line-height:1;
+    font-variant-numeric:tabular-nums;display:block;}
+  .cek-stat.fail .cek-num{color:var(--danger);}
+  .cek-stat.pass .cek-num{color:var(--safe);}
+  .cek-lbl{font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);
+    font-weight:600;margin-top:8px;}
+  .cek-arrow{font-family:var(--mono);font-size:30px;color:var(--muted-2);}
+  .cek-rows{display:grid;gap:6px;}
+  .cek-row{display:grid;grid-template-columns:1fr auto;align-items:center;gap:14px;
+    padding:10px 12px;border-radius:8px;background:var(--panel-2);border:1px solid var(--border);}
+  .cek-attack{font-family:var(--mono);font-size:13px;font-weight:600;color:var(--text);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .cek-ba{display:flex;align-items:center;gap:9px;justify-self:end;}
+  .cek-attrib{margin-top:14px;font-family:var(--mono);font-size:11px;color:var(--muted-2);
+    letter-spacing:.04em;display:flex;align-items:center;gap:8px;}
+  .cek-attrib .dot{color:var(--signal);}
+
+  @media(max-width:1080px){.hero,.grid{grid-template-columns:1fr}
+    .hero-left{border-right:none;border-bottom:1px solid var(--border)}}
+</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo-dot"></span>
+      <span class="brand-name">ENVOY</span>
+      <span class="brand-sub">SELF-HEAL MONITOR</span>
+    </div>
+    <div class="live"><span class="live-dot"></span><span>live · polling 1s</span></div>
+  </header>
+
+  <main>
+    <!-- PANEL 1 — TRUST -->
+    <section class="panel hero">
+      <div class="hero-left">
+        <div class="label">Agent Trust Score</div>
+        <div class="trust-readout">
+          <span id="trustNum" class="trust-num t-mid">--</span>
+          <span class="trust-max">/100</span>
+        </div>
+        <div class="trust-track"><div id="trustBar" class="trust-bar lvl-mid"></div></div>
+        <div id="trustDelta" class="trust-delta">awaiting telemetry…</div>
+      </div>
+      <div class="hero-right">
+        <div class="label">Trust Trajectory</div>
+        <svg id="spark" class="spark" viewBox="0 0 260 84" preserveAspectRatio="none"></svg>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-num" id="kpiIter">0</div><div class="kpi-lbl">iterations</div></div>
+          <div class="kpi"><div class="kpi-num danger-text" id="kpiBreach">0</div><div class="kpi-lbl">breaches caught</div></div>
+          <div class="kpi"><div class="kpi-num safe-text" id="kpiRules">0</div><div class="kpi-lbl">rules learned</div></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid">
+      <!-- PANEL 3 — ATTACK FEED -->
+      <section class="panel">
+        <div class="panel-head"><h2>ATTACK FEED</h2><span class="panel-sub" id="feedSub">—</span></div>
+        <div id="feed" class="feed"></div>
+      </section>
+
+      <!-- PANEL 2 — GUARDRAILS -->
+      <section class="panel">
+        <div class="panel-head"><h2>GUARDRAILS</h2><span class="panel-sub" id="rulesSub">—</span></div>
+        <div class="rules-group" id="seedGroup" hidden>
+          <div class="group-label">Seed rules <span class="count" id="seedCount"></span></div>
+          <div id="seedRules"></div>
+        </div>
+        <div class="rules-group">
+          <div class="group-label learned">Learned rules <span class="count" id="learnedCount"></span></div>
+          <div id="learnedRules"></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- PANEL 4 — VARIANT GENERALIZATION -->
+    <section class="panel callout">
+      <div class="callout-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+      </div>
+      <div class="callout-body">
+        <div class="callout-title">GENERALIZED — NOT MEMORIZED</div>
+        <div class="callout-text" id="calloutText">—</div>
+      </div>
+      <div class="callout-stat">
+        <div class="big"><span id="variantBlocked">0</span><span class="den">/<span id="variantTotal">0</span></span></div>
+        <div class="kpi-lbl">variant attacks blocked</div>
+      </div>
+    </section>
+
+    <!-- PANEL 5 — CEKURA EVAL (independent judge) -->
+    <section class="panel" id="cekuraPanel" hidden>
+      <div class="panel-head">
+        <h2>CEKURA EVAL · INDEPENDENT JUDGE</h2>
+        <span class="panel-sub">Credential Leak Refusal</span>
+      </div>
+      <div class="cek-body">
+        <div class="cek-delta">
+          <div class="cek-stat fail"><span class="cek-num" id="cekBefore">–</span><span class="cek-lbl">before · naive, no rules</span></div>
+          <div class="cek-arrow">→</div>
+          <div class="cek-stat pass"><span class="cek-num" id="cekAfter">–</span><span class="cek-lbl">after · + R1</span></div>
+        </div>
+        <div class="cek-rows" id="cekRows"></div>
+        <div class="cek-attrib" id="cekAttrib"></div>
+      </div>
+    </section>
+  </main>
+
+<script>
+const CEK_ORDER = ["authority_bank_verification","sync_pin","injection_session_id","system_passphrase","merchant_reference"];
+const seenRuleIds = new Set();
+const seenIters = new Set();
+let displayedTrust = 0;
+let lastTrust = null;
+let lastStateStr = null;   // diff-before-render: identical payload -> do nothing
+
+function trustBarClass(v){ return v < 60 ? 'lvl-low' : v < 85 ? 'lvl-mid' : 'lvl-high'; }
+function trustTextClass(v){ return v < 60 ? 't-low' : v < 85 ? 't-mid' : 't-high'; }
+function esc(s){ return (s==null?'':String(s)).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function badge(kind){ const b = (kind==='BREACH'||kind==='FAIL')?'breach':'blocked'; return `<span class="badge ${b}">${kind}</span>`; }
+
+function tweenNumber(el, to){
+  const from = displayedTrust;
+  if(from === to){ el.textContent = to; displayedTrust = to; return; }
+  const start = performance.now(), dur = 700;
+  function step(now){
+    const k = Math.min(1, (now - start) / dur);
+    const eased = 1 - Math.pow(1 - k, 3);
+    el.textContent = Math.round(from + (to - from) * eased);
+    if(k < 1){ requestAnimationFrame(step); } else { displayedTrust = to; }
+  }
+  requestAnimationFrame(step);
+}
+
+function drawSpark(series){
+  const svg = document.getElementById('spark');
+  const W = 260, H = 84, pad = 6;
+  if(!series.length){ svg.innerHTML = ''; return; }
+  const pts = series.length === 1 ? [50, series[0]] : series.slice();
+  const n = pts.length;
+  const x = i => pad + (W - 2*pad) * (n === 1 ? 0.5 : i/(n-1));
+  const y = v => (H - pad) - (H - 2*pad) * (Math.max(0,Math.min(100,v))/100);
+  const line = pts.map((v,i)=>`${i?'L':'M'}${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(' ');
+  const area = `${line} L${x(n-1).toFixed(1)},${H-pad} L${x(0).toFixed(1)},${H-pad} Z`;
+  svg.innerHTML =
+    `<path d="${area}" fill="rgba(52,227,164,.10)"/>`+
+    `<path d="${line}" fill="none" stroke="var(--safe)" stroke-width="2"/>`+
+    pts.map((v,i)=>`<circle cx="${x(i).toFixed(1)}" cy="${y(v).toFixed(1)}" r="2.6" fill="var(--safe)"/>`).join('');
+}
+
+function render(s){
+  const its = s.iterations || [];
+  const rules = s.guardrails || [];
+  const tx = s.transcripts || [];
+  const cek = s.cekura || null;
+  const txByIter = {}; tx.forEach(t => txByIter[t.iteration] = t);
+
+  // ----- TRUST -----
+  const latest = its.length ? its[its.length-1].trust_score : 50;
+  const num = document.getElementById('trustNum');
+  tweenNumber(num, latest);
+  num.className = 'trust-num ' + trustTextClass(latest);
+  const bar = document.getElementById('trustBar');
+  bar.style.width = latest + '%';                 // set directly: CSS transition fires only on change
+  bar.className = 'trust-bar ' + trustBarClass(latest);
+  const delta = lastTrust==null ? (its.length?latest-50:0) : latest - lastTrust;
+  document.getElementById('trustDelta').innerHTML = its.length
+    ? `started 50 · now <b>${latest}</b>${delta>0?` · ▲ ${delta} this cycle`:''}`
+    : 'awaiting telemetry…';
+  lastTrust = latest;
+  drawSpark(its.map(i=>i.trust_score));           // only runs when state changed (guarded upstream)
+
+  document.getElementById('kpiIter').textContent = its.length;
+  document.getElementById('kpiBreach').textContent = its.filter(i=>i.result_before==='BREACH').length;
+  document.getElementById('kpiRules').textContent = rules.filter(r=>r.added_after).length || its.filter(i=>i.guardrail_added).length;
+
+  // ----- ATTACK FEED (enter-animate only NEW iterations) -----
+  const feed = document.getElementById('feed');
+  document.getElementById('feedSub').textContent = its.length ? `${its.length} iterations` : 'no data';
+  feed.innerHTML = its.map(it=>{
+    const t = txByIter[it.iteration] || {};
+    const leaked = t.first_hit && t.first_hit.leaked_value;
+    const ruleId = t.patch && t.patch.guardrail_id;
+    const isBreach = it.result_before === 'BREACH';
+    const isNew = !seenIters.has(it.iteration); seenIters.add(it.iteration);
+    const flow = [
+      badge(it.result_before),
+      leaked ? `<span class="leaked">leaked ${esc(leaked)}</span>` : '',
+      `<span class="arrow">→</span>`,
+      ruleId ? `<span class="rule-chip">${esc(ruleId)} added</span><span class="arrow">→</span>` : '',
+      badge(it.result_after)
+    ].join('');
+    return `<div class="row ${isBreach?'breach':''} ${isNew?'enter':''}">
+      <div class="row-iter">#${it.iteration}</div>
+      <div class="row-main">
+        <div class="row-attack">${esc(it.attack)}</div>
+        <div class="row-flow">${flow}</div>
+      </div>
+      <div class="row-variant"><span class="vlabel">variant</span>${badge(it.variant_result)}</div>
+    </div>`;
+  }).join('') || `<div class="empty" style="padding:18px">waiting for self-heal run…</div>`;
+
+  // ----- GUARDRAILS (enter-animate only NEW rule ids) -----
+  const seed = rules.filter(r=>!r.added_after);
+  const learned = rules.filter(r=>r.added_after);
+  document.getElementById('rulesSub').textContent = `${rules.length} active`;
+  document.getElementById('seedGroup').hidden = seed.length === 0;
+  document.getElementById('seedCount').textContent = seed.length;
+  document.getElementById('learnedCount').textContent = learned.length;
+  const ruleHtml = (r, learnedFlag) => {
+    const isNew = !seenRuleIds.has(r.id); seenRuleIds.add(r.id);
+    const after = r.added_after ? `<span class="rule-after">after leak · ${esc(r.added_after)}</span>` : '';
+    return `<div class="rule ${learnedFlag?'learned':''} ${isNew?'enter':''}">
+      <span class="rule-id">${esc(r.id)}</span>${after}
+      <div class="rule-text">${esc(r.rule)}</div></div>`;
+  };
+  document.getElementById('seedRules').innerHTML =
+    seed.map(r=>ruleHtml(r,false)).join('') || `<div class="empty">none</div>`;
+  document.getElementById('learnedRules').innerHTML =
+    learned.map(r=>ruleHtml(r,true)).join('') || `<div class="empty">no rules learned yet — run the loop</div>`;
+
+  // ----- VARIANT GENERALIZATION -----
+  const vBlocked = its.filter(i=>i.variant_result==='BLOCKED').length;
+  document.getElementById('variantBlocked').textContent = vBlocked;
+  document.getElementById('variantTotal').textContent = its.length;
+  document.getElementById('calloutText').textContent = its.length
+    ? `Each variant is a reworded attack the patched rule never saw. ${vBlocked} of ${its.length} were blocked on first contact — the agent learned the attack class, not the exact wording.`
+    : 'Variant results will appear once the self-heal loop runs.';
+
+  // ----- CEKURA EVAL (sponsor proof) -----
+  renderCekura(cek);
+}
+
+function renderCekura(cek){
+  const panel = document.getElementById('cekuraPanel');
+  if(!cek || !cek.rows){ panel.hidden = true; return; }
+  panel.hidden = false;
+  document.getElementById('cekBefore').textContent = `${cek.before_pass}/${cek.before_total}`;
+  document.getElementById('cekAfter').textContent  = `${cek.after_pass}/${cek.after_total}`;
+
+  const byKey = {};
+  cek.rows.forEach(r => { byKey[r.condition + ':' + r.attack] = r; });
+  const order = CEK_ORDER.filter(a => byKey['before:'+a] || byKey['after:'+a]);
+
+  document.getElementById('cekRows').innerHTML = order.map(a=>{
+    const b = byKey['before:'+a] || {}, af = byKey['after:'+a] || {};
+    const leak = b.leaked_local ? `<span class="leaked">leaked ${esc(b.leaked_local)}</span>` : '';
+    const beforeBadge = (b.metric_pass===false) ? badge('FAIL') : (b.metric_pass===true ? badge('PASS') : '');
+    const afterBadge  = (af.metric_pass===true) ? badge('PASS') : (af.metric_pass===false ? badge('FAIL') : '');
+    return `<div class="cek-row">
+      <div class="cek-attack">${esc(a)}</div>
+      <div class="cek-ba">${beforeBadge}${leak}<span class="arrow">→</span>${afterBadge}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('cekAttrib').innerHTML =
+    `<span class="dot">●</span> scored by Cekura llm_judge · metric ${esc(cek.metric_id)} · agent ${esc(cek.agent_id)}`;
+}
+
+async function tick(){
+  try{
+    const r = await fetch('/api/state', {cache:'no-store'});
+    if(!r.ok) return;
+    const data = await r.json();
+    const empty = (!data.iterations||!data.iterations.length) && (!data.guardrails||!data.guardrails.length) && !data.cekura;
+    if(empty && lastStateStr) return;             // keep last-good on a transient empty read
+    const str = JSON.stringify(data);
+    if(str === lastStateStr) return;              // IDENTICAL payload -> no re-render, no animation
+    lastStateStr = str;
+    render(data);
+  }catch(e){ /* mid-write / network blip: keep last-good on screen */ }
+}
+tick();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>
