@@ -39,10 +39,11 @@ CONSTRAINTS = {
 
 
 async def bot(runner_args):
-    """Pipecat runner entry point. A.1 supports the SmallWebRTC (browser) transport only."""
-    from pipecat.runner.types import SmallWebRTCRunnerArguments
+    """Pipecat runner entry point. Supports SmallWebRTC (browser, A.1) and the Twilio media-stream
+    transport (outbound call leg, A.3). The outbound call itself is originated by
+    telephony/place_call.py; Twilio then connects its media stream to this bot's /ws endpoint."""
+    from pipecat.runner.types import SmallWebRTCRunnerArguments, WebSocketRunnerArguments
     from pipecat.transports.base_transport import TransportParams
-    from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
     from pipecat.workers.runner import WorkerRunner
 
     # Krisp noise filter is available when deployed to Pipecat Cloud (ENV != local).
@@ -53,26 +54,59 @@ async def bot(runner_args):
     else:
         krisp_filter = None
 
-    if not isinstance(runner_args, SmallWebRTCRunnerArguments):
-        logger.error(
-            f"A.1 supports SmallWebRTC only; got {type(runner_args).__name__}. Twilio lands in A.3."
-        )
-        return
+    # WebRTC defaults; Twilio media streams are 8 kHz mu-law both directions.
+    audio_in_sample_rate, audio_out_sample_rate = 16000, 24000
 
-    transport = SmallWebRTCTransport(
-        webrtc_connection=runner_args.webrtc_connection,
-        params=TransportParams(
-            audio_in_enabled=True,
-            audio_in_filter=krisp_filter,
-            audio_out_enabled=True,
-        ),
-    )
+    if isinstance(runner_args, SmallWebRTCRunnerArguments):
+        from pipecat.transports.smallwebrtc.transport import SmallWebRTCTransport
+
+        transport = SmallWebRTCTransport(
+            webrtc_connection=runner_args.webrtc_connection,
+            params=TransportParams(
+                audio_in_enabled=True,
+                audio_in_filter=krisp_filter,
+                audio_out_enabled=True,
+            ),
+        )
+    elif isinstance(runner_args, WebSocketRunnerArguments):
+        # Twilio (outbound call leg): parse the media-stream handshake, then bridge audio over the
+        # FastAPI websocket with the Twilio serializer at 8 kHz.
+        from pipecat.runner.utils import parse_telephony_websocket
+        from pipecat.serializers.twilio import TwilioFrameSerializer
+        from pipecat.transports.websocket.fastapi import (
+            FastAPIWebsocketParams,
+            FastAPIWebsocketTransport,
+        )
+
+        audio_in_sample_rate, audio_out_sample_rate = 8000, 8000
+        _, call_data = await parse_telephony_websocket(runner_args.websocket)
+        serializer = TwilioFrameSerializer(
+            stream_sid=call_data["stream_id"],
+            call_sid=call_data["call_id"],
+            account_sid=os.getenv("TWILIO_ACCOUNT_SID", ""),
+            auth_token=os.getenv("TWILIO_AUTH_TOKEN", ""),
+        )
+        transport = FastAPIWebsocketTransport(
+            websocket=runner_args.websocket,
+            params=FastAPIWebsocketParams(
+                audio_in_enabled=True,
+                audio_in_filter=krisp_filter,
+                audio_out_enabled=True,
+                add_wav_header=False,
+                serializer=serializer,
+            ),
+        )
+    else:
+        logger.error(f"Unsupported runner arguments type: {type(runner_args).__name__}")
+        return
 
     worker = pipeline_factory.build_pipeline(
         system_prompt=brain.SYSTEM_PROMPT,
         tools=["end_call", "create_event", "send_confirmation"],
         transport=transport,
         constraints=CONSTRAINTS,
+        audio_in_sample_rate=audio_in_sample_rate,
+        audio_out_sample_rate=audio_out_sample_rate,
     )
 
     runner = WorkerRunner(handle_sigint=False)

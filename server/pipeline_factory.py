@@ -19,7 +19,8 @@ Heavy imports live INSIDE build_pipeline() so `import pipeline_factory` stays li
 from contracts import append_event, TurnEvent, load_guardrails
 
 
-def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, constraints=None):
+def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, constraints=None,
+                   audio_in_sample_rate=16000, audio_out_sample_rate=24000):
     """Assemble the real voice pipeline and return its PipelineWorker.
 
     Args:
@@ -29,6 +30,8 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         transport: the Pipecat transport (SmallWebRTC for A.1; Twilio in A.3).
         on_event: callback(TurnEvent) -> None for turn emission. Defaults to contracts.append_event.
         constraints: the booking constraints dict passed into brain.build_messages each turn.
+        audio_in_sample_rate: transport input rate. 16000 for WebRTC; 8000 for Twilio (8 kHz mu-law).
+        audio_out_sample_rate: transport output rate. 24000 for WebRTC; 8000 for Twilio.
 
     The transport's client-connected/disconnected handlers are registered here (Envoy speaks first).
     """
@@ -339,8 +342,8 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         params=PipelineParams(
             enable_metrics=True,
             enable_usage_metrics=True,
-            audio_in_sample_rate=16000,
-            audio_out_sample_rate=24000,
+            audio_in_sample_rate=audio_in_sample_rate,
+            audio_out_sample_rate=audio_out_sample_rate,
         ),
         observers=[turn_observer],
     )
