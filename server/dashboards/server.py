@@ -47,9 +47,14 @@ def _read(path: Path, default):
         return _cache.get(path, default)
 
 
-@app.get("/", response_class=HTMLResponse)
+# Never let the browser cache the page or the state — a stale cached index.html was serving an
+# old (pre-blink-fix) build even after the code was corrected.
+_NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0", "Pragma": "no-cache"}
+
+
+@app.get("/")
 def index():
-    return INDEX.read_text()
+    return HTMLResponse(INDEX.read_text(), headers=_NO_CACHE)
 
 
 @app.get("/api/state")
@@ -59,7 +64,7 @@ def state():
         "iterations":  _read(EVAL_PATH, []),
         "transcripts": _read(TRANSCRIPTS_PATH, []),
         "cekura":      _read(CEKURA_PATH, None),
-    })
+    }, headers=_NO_CACHE)
 
 
 if __name__ == "__main__":
