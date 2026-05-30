@@ -12,9 +12,18 @@ Env (paste the event endpoints into .env):
 Requires: openai  (uv add openai)
 """
 from __future__ import annotations
-import os, json
+import os, json, re
 from pathlib import Path
 from typing import List, Dict, Optional, Any
+
+# Strip Nemotron <think>...</think> reasoning from model TEXT before it's returned/spoken (Rushil's
+# helper). Non-streaming path only - the streaming voice pipeline gates per-token in pipeline_factory.
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
+def strip_reasoning(text: str) -> str:
+    text = _THINK.sub("", text)                              # full blocks
+    text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL)  # unclosed opener
+    return text.replace("</think>", "").replace("<think>", "").strip()  # stray tags
 
 # Auto-load server/.env at import so `uv run smoke_text.py` works without --env-file.
 # Points at the .env next to this module, so it loads regardless of cwd. Does not override
@@ -45,7 +54,8 @@ def complete(messages: List[Dict[str, str]], tools: Optional[list] = None, tempe
         kwargs["tools"] = tools
     resp = client.chat.completions.create(**kwargs)
     msg = resp.choices[0].message
-    return {"text": msg.content or "", "tool_calls": getattr(msg, "tool_calls", None)}
+    # Strip reasoning from TEXT only; leave tool_calls untouched.
+    return {"text": strip_reasoning(msg.content or ""), "tool_calls": getattr(msg, "tool_calls", None)}
 
 def complete_json(messages: List[Dict[str, str]], temperature: float = 0.2) -> Any:
     """For the monitor / patcher / parser: parse a JSON object/array, tolerating code fences."""

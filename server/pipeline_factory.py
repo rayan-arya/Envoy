@@ -19,6 +19,68 @@ Heavy imports live INSIDE build_pipeline() so `import pipeline_factory` stays li
 from contracts import append_event, TurnEvent, load_guardrails
 
 
+class _ReasoningStreamFilter:
+    """Streaming <think>...</think> stripper for the token-by-token voice path. Pure string ops (no
+    deps) so it stays importable/light and unit-testable; the pipecat ReasoningGate processor wraps it.
+
+    feed(chunk) -> text to emit now; finish() -> trailing text at end of response. It GATES: from each
+    response start it buffers and emits nothing until it either sees </think> (then returns the cleaned
+    remainder and streams every following chunk) or determines the response has no reasoning (then
+    streams from the first real token). An unclosed <think> at end of response is dropped entirely.
+    """
+
+    _OPEN = "<think>"
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self._mode = "deciding"   # deciding | reasoning | passthrough
+        self._buf = ""
+
+    @classmethod
+    def _partial_open(cls, s: str) -> bool:
+        # True if s could still grow into "<think>" (e.g. "<", "<thi") - keep buffering.
+        return bool(s) and len(s) < len(cls._OPEN) and cls._OPEN.startswith(s)
+
+    @staticmethod
+    def _strip_strays(t: str) -> str:
+        return t.replace("<think>", "").replace("</think>", "")
+
+    def feed(self, chunk: str) -> str:
+        if self._mode == "passthrough":
+            return self._strip_strays(chunk)
+        self._buf += chunk
+        if self._mode == "reasoning":
+            if "</think>" in self._buf:
+                after = self._buf.split("</think>", 1)[1]
+                self._buf, self._mode = "", "passthrough"
+                return self._strip_strays(after)
+            return ""
+        # deciding: does this response open with reasoning?
+        ls = self._buf.lstrip()
+        if ls == "" or self._partial_open(ls):
+            return ""  # only whitespace / a possible partial "<think>" so far - keep buffering
+        if ls.startswith(self._OPEN):
+            self._mode = "reasoning"
+            if "</think>" in self._buf:  # whole block arrived in one chunk
+                after = self._buf.split("</think>", 1)[1]
+                self._buf, self._mode = "", "passthrough"
+                return self._strip_strays(after)
+            return ""
+        out, self._buf, self._mode = self._buf, "", "passthrough"  # plain answer, no reasoning
+        return self._strip_strays(out)
+
+    def finish(self) -> str:
+        out = ""
+        if self._mode == "deciding" and self._buf:
+            ls = self._buf.lstrip()
+            if not (ls.startswith(self._OPEN) or self._partial_open(ls)):
+                out = self._strip_strays(self._buf)
+        self.reset()
+        return out
+
+
 def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, constraints=None,
                    audio_in_sample_rate=16000, audio_out_sample_rate=24000):
     """Assemble the real voice pipeline and return its PipelineWorker.
@@ -48,7 +110,10 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
         EndTaskFrame,
         FunctionCallResultProperties,
         LLMContextFrame,
+        LLMFullResponseEndFrame,
+        LLMFullResponseStartFrame,
         LLMRunFrame,
+        LLMTextFrame,
         TranscriptionFrame,
         TTSTextFrame,
         UserStartedSpeakingFrame,
@@ -323,6 +388,35 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
 
     turn_observer = TurnEventObserver(on_event)
 
+    # --- Hook C: ReasoningGate (strip Nemotron <think>...</think> from streamed text before TTS) --
+    class ReasoningGate(FrameProcessor):
+        """Wraps the streaming _ReasoningStreamFilter: the LLM streams token chunks, so we gate
+        LLMTextFrame output until reasoning closes. tool_calls are untouched - they don't travel as
+        LLMTextFrame. The system prompt / assistant context downstream also see the cleaned text."""
+
+        def __init__(self):
+            super().__init__()
+            self._filter = _ReasoningStreamFilter()
+
+        async def process_frame(self, frame, direction):
+            await super().process_frame(frame, direction)
+            if isinstance(frame, LLMFullResponseStartFrame):
+                self._filter.reset()
+                await self.push_frame(frame, direction)
+            elif isinstance(frame, LLMTextFrame):
+                out = self._filter.feed(frame.text or "")
+                if out:
+                    await self.push_frame(LLMTextFrame(out), direction)
+            elif isinstance(frame, LLMFullResponseEndFrame):
+                tail = self._filter.finish()
+                if tail:
+                    await self.push_frame(LLMTextFrame(tail), direction)
+                await self.push_frame(frame, direction)
+            else:
+                await self.push_frame(frame, direction)
+
+    reasoning_gate = ReasoningGate()
+
     # --- Pipeline assembly ---------------------------------------------------------------------
     pipeline = Pipeline(
         [
@@ -331,6 +425,7 @@ def build_pipeline(system_prompt, tools=None, transport=None, on_event=None, con
             user_aggregator,
             guardrail_injector,  # rebuild system prompt from brain + fresh guardrails, every turn
             llm,
+            reasoning_gate,      # strip <think>...</think> from streamed text before it reaches TTS
             tts,
             transport.output(),
             assistant_aggregator,
