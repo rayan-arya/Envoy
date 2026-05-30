@@ -4,8 +4,9 @@ OWNER: Rayan. Both tracks import this. THIS IS THE PARALLELISM UNLOCK: it lets R
 and test the entire brain + self-heal story in TEXT, with no voice pipeline.
 
 Env (paste the event endpoints into .env):
-  NEMOTRON_LLM_URL    e.g. http://nemotron-fleet-...elb.amazonaws.com/v1
-  NEMOTRON_LLM_MODEL  e.g. nvidia/nemotron-3-super
+  NEMOTRON_LLM_URL      e.g. http://nemotron-fleet-...elb.amazonaws.com/v1
+  NEMOTRON_LLM_MODEL    e.g. nvidia/nemotron-3-super
+  NEMOTRON_LLM_API_KEY  optional; matches the pipecat starter (falls back to NVIDIA_API_KEY).
   (fallback) OPENAI_API_KEY -> GPT-4.1, used only if NEMOTRON_LLM_URL is unset.
 
 Requires: openai  (uv add openai)
@@ -19,7 +20,10 @@ def _client_and_model():
     url = os.getenv("NEMOTRON_LLM_URL", "").strip()
     if url:
         # NVIDIA endpoint is OpenAI-compatible; api_key is usually unchecked but required by the SDK.
-        return OpenAI(base_url=url, api_key=os.getenv("NVIDIA_API_KEY", "not-needed")), os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super")
+        # Prefer NEMOTRON_LLM_API_KEY (matches the pipecat starter's bot-nemotron.py); fall back to
+        # NVIDIA_API_KEY for back-compat, then a harmless placeholder vLLM ignores unless --api-key is set.
+        api_key = os.getenv("NEMOTRON_LLM_API_KEY") or os.getenv("NVIDIA_API_KEY") or "not-needed"
+        return OpenAI(base_url=url, api_key=api_key), os.getenv("NEMOTRON_LLM_MODEL", "nvidia/nemotron-3-super")
     # fallback so the team is never blocked if the Nemotron endpoint is down
     return OpenAI(api_key=os.getenv("OPENAI_API_KEY", "")), "gpt-4.1"
 
