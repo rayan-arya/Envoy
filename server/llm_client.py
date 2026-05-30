@@ -13,7 +13,17 @@ Requires: openai  (uv add openai)
 """
 from __future__ import annotations
 import os, json
+from pathlib import Path
 from typing import List, Dict, Optional, Any
+
+# Auto-load server/.env at import so `uv run smoke_text.py` works without --env-file.
+# Points at the .env next to this module, so it loads regardless of cwd. Does not override
+# vars already set in the shell (standard load_dotenv behavior), keeping the OPENAI fallback intact.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).with_name(".env"))
+except ImportError:
+    pass
 
 def _client_and_model():
     from openai import OpenAI
