@@ -2,7 +2,7 @@
 
 **A voice agent that books on your behalf — and can't be talked into betraying you.**
 
-> 🎥 **Demo:** (https://drive.google.com/drive/folders/1dgEqeJ2n29OLZ5WTV72DCKW8Fn5PgLo7)
+> 🎥 **Demo:** (https://drive.google.com/drive/folders/1dgEqeJ2n29OLZ5WTV72DCKW8Fn5PgLo7)run at 1.5x or 1.75x speed!
 > **Repo:** `github.com/rayan-arya/Envoy`
 
 ---
