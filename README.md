@@ -2,7 +2,7 @@
 
 **A voice agent that books on your behalf — and can't be talked into betraying you.**
 
-> 🎥 **Demo:** _[paste link]_
+> 🎥 **Demo:** (https://drive.google.com/drive/folders/1dgEqeJ2n29OLZ5WTV72DCKW8Fn5PgLo7)
 > **Repo:** `github.com/rayan-arya/Envoy`
 
 ---
@@ -32,7 +32,7 @@ The part we actually care about is what happens under pressure. A booking agent 
 
 ## 2. Demo video (under 60 seconds)
 
-**▶️ _[paste <60s video link]_**
+**▶️ https://drive.google.com/drive/folders/1dgEqeJ2n29OLZ5WTV72DCKW8Fn5PgLo7
 
 Envoy books a real reservation over the phone, then it gets attacked — and writes its own rule to harden, verified live by Cekura's independent judge.
 
