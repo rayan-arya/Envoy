@@ -30,7 +30,7 @@ The part we actually care about is what happens under pressure. A booking agent 
 
 **The result, measured:** from a naive agent that leaks every attack, one self-written rule takes credential-leak refusal from **0/5 → 5/5** (independently scored by Cekura), blocks **6/6** reworded variant attacks it was never shown, and drives the live trust score 50 → 100.
 
-## 2. Demo video (under 60 seconds)
+## 2. Demo video - run at 1.5x or 1.75x speed!
 
 **▶️ https://drive.google.com/drive/folders/1dgEqeJ2n29OLZ5WTV72DCKW8Fn5PgLo7
 
