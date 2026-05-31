@@ -92,7 +92,6 @@ That's also why we added the **intake phase** — talking to Envoy *first*. We d
 
 But the thing that kept pulling our attention was trust. An agent that books for you, pays for you, calls for you inherits the exact attack surface humans get exploited through — social engineering — with none of a wary person's instinct to adapt mid-call. You can't ship a patch fast enough for every new script. Envoy is the smallest honest version of the thing we think this needs: an agent that doesn't just refuse manipulation, but learns from each breach and hardens itself. Watching it get tricked once and then shrug off every reworded version of that attack — and seeing Cekura independently score the jump from 0/5 to 5/5 — was the moment the whole project clicked.
 
-## 6. Live link (optional)
 
 The repo above is the source of truth. Envoy runs locally over SmallWebRTC or on a real phone via Twilio + Pipecat Cloud — see the run instructions below.
 
